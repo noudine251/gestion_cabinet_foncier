@@ -15,7 +15,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
-    <!-- Sync Firebase → localStorage (doit se charger avant l'app) -->
+    <!-- Migration Firestore : intercepte Storage.prototype avant le chargement de l'app -->
     <script src="firebase.js"></script>
   </head>
   <body>
