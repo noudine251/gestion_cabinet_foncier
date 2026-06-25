@@ -18,10 +18,17 @@ const WRITE_TOKEN = "SNSFoncier@2024#Secure";
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ── Store mémoire (source de vérité, plus de localStorage) ───
+// ── Store mémoire ────────────────────────────────────────────
 const memStore = Object.create(null);
 
-// ── Nettoyer les anciennes données dans le vrai localStorage ──
+// ── Supprimer les surcharges d'instance d'une version précédente ─
+// (localStorage.setItem = ... persistait entre sessions et shadait
+//  notre Storage.prototype override)
+try { delete localStorage.getItem;    } catch (_) {}
+try { delete localStorage.setItem;    } catch (_) {}
+try { delete localStorage.removeItem; } catch (_) {}
+
+// ── Nettoyer APP_KEYS du vrai localStorage ────────────────────
 APP_KEYS.forEach(k => {
   try { Storage.prototype.removeItem.call(window.localStorage, k); } catch (_) {}
 });
@@ -43,8 +50,9 @@ Storage.prototype.getItem = function (key) {
 Storage.prototype.setItem = function (key, val) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     const str = String(val);
-    memStore[key]  = str;
-    lastLocalWrite = Date.now();
+    memStore[key] = str;
+    // ⚠️  PAS de lastLocalWrite ici — c'était le bug :
+    //     chaque écriture locale bloquait les sync distants pendant 2s
     db.doc(DOC_PATH)
       .set({ [key]: str, _token: WRITE_TOKEN }, { merge: true })
       .catch(e => console.warn("[Firebase] ⚠️ Write:", e.message));
@@ -61,12 +69,8 @@ Storage.prototype.removeItem = function (key) {
   _proto.del.call(this, key);
 };
 
-// ── Anti-boucle ──────────────────────────────────────────────
-let lastLocalWrite = 0;
-
-// ── Cache du code app.js (chargé une seule fois en mémoire) ──
+// ── Code app.js mis en cache mémoire (fetch une seule fois) ──
 let appCode = null;
-
 async function getAppCode() {
   if (appCode) return appCode;
   const res = await fetch('app.js');
@@ -75,35 +79,31 @@ async function getAppCode() {
 }
 
 // ── Re-rendu React sans rechargement de page ─────────────────
-// On injecte app.js comme script INLINE → toujours exécuté par
-// le navigateur (pas de déduplication sur les scripts sans src).
-async function rerenderApp() {
-  const wrapper = document.getElementById('app-wrapper');
-  if (!wrapper) { window.location.reload(); return; }
-
-  try {
-    const code = await getAppCode();
-
-    // Nouveau conteneur React propre (sans marqueurs internes React)
-    wrapper.innerHTML = '<div id="root"></div>';
-
-    // Supprimer les précédents scripts app.js injectés
-    document.querySelectorAll('script[data-sns-app]').forEach(s => s.remove());
-
-    // Script inline → exécuté immédiatement, garanti par tous les navigateurs
-    const s = document.createElement('script');
-    s.textContent = code;
-    s.setAttribute('data-sns-app', '1');
-    document.body.appendChild(s);
-
-    console.log("[Firebase] ✅ Interface mise à jour en temps réel");
-  } catch (err) {
-    console.warn("[Firebase] rerenderApp échoué → rechargement :", err.message);
-    window.location.reload();
-  }
+// Script inline (textContent) → toujours exécuté par le navigateur,
+// jamais dédupliqué contrairement à script[src].
+let rerenderTimer = null;
+function rerenderApp() {
+  clearTimeout(rerenderTimer);
+  rerenderTimer = setTimeout(async () => {
+    const wrapper = document.getElementById('app-wrapper');
+    if (!wrapper) { window.location.reload(); return; }
+    try {
+      const code = await getAppCode();
+      wrapper.innerHTML = '<div id="root"></div>';
+      document.querySelectorAll('script[data-sns-app]').forEach(s => s.remove());
+      const s = document.createElement('script');
+      s.textContent = code;
+      s.setAttribute('data-sns-app', '1');
+      document.body.appendChild(s);
+      console.log("[Firebase] ✅ Interface mise à jour en temps réel");
+    } catch (err) {
+      console.warn("[Firebase] rerenderApp échoué → rechargement :", err.message);
+      window.location.reload();
+    }
+  }, 300);
 }
 
-// ── Chargement initial : données fraîches depuis le serveur ───
+// ── Chargement initial depuis le serveur ─────────────────────
 async function syncFromFirebase() {
   try {
     const snap = await db.doc(DOC_PATH).get({ source: 'server' });
@@ -115,7 +115,6 @@ async function syncFromFirebase() {
       console.log("[Firebase] 📭 Pas encore de données cloud");
     }
   } catch (err) {
-    // Hors-ligne : fallback sur le cache local
     console.warn("[Firebase] ⚠️ Serveur inaccessible, cache :", err.message);
     try {
       const snap = await db.doc(DOC_PATH).get({ source: 'cache' });
@@ -124,28 +123,25 @@ async function syncFromFirebase() {
         APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
         console.log("[Firebase] ✅ Données depuis cache offline");
       }
-    } catch (_) {
-      console.warn("[Firebase] ⚠️ Aucune donnée disponible");
-    }
+    } catch (_) {}
   }
 }
 
-// ── Listener temps réel (tous navigateurs / appareils) ────────
+// ── Listener temps réel ──────────────────────────────────────
+// Seule garde : hasPendingWrites (= c'est MON écriture en attente).
+// lastLocalWrite a été supprimé — c'était lui qui bloquait les
+// mises à jour distantes en considérant à tort le snapshot comme
+// "notre propre écriture récente".
 db.doc(DOC_PATH).onSnapshot(
   snapshot => {
-    // Écriture locale non encore confirmée par le serveur → ignorer
-    if (snapshot.metadata.hasPendingWrites) return;
-    // Notre propre écriture récente (< 2 s) → ignorer
-    if (Date.now() - lastLocalWrite < 2000) return;
-    // App pas encore montée → ignorer
-    if (!window.__appReady) return;
+    if (snapshot.metadata.hasPendingWrites) return; // mon écriture locale → ignorer
+    if (!window.__appReady) return;                 // app pas encore montée → ignorer
     if (!snapshot.exists) return;
 
-    // Mettre à jour le store mémoire
     const data = snapshot.data();
     APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
 
-    console.log("[Firebase] 🔄 Changement reçu → mise à jour de l'interface");
+    console.log("[Firebase] 🔄 Changement distant reçu → re-rendu");
     rerenderApp();
   },
   err => console.warn("[Firebase] ⚠️ Listener:", err.message)
