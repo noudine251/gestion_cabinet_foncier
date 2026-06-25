@@ -47,13 +47,16 @@
       </style>
     </div>
 
-    <div id="root"></div>
+    <div id="app-wrapper"><div id="root"></div></div>
 
     <script>
       function loadApp() {
         const script = document.createElement("script");
         script.src = "app.js";
+        script.setAttribute("data-sns-app", "1");
         script.onload = function () {
+          // Signaler que l'app est montée (active le listener temps réel)
+          window.__appReady = true;
           // Masquer l'écran de chargement
           const loader = document.getElementById("loading-screen");
           if (loader) {
