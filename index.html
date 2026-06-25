@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="SNS Foncier — Gestion Foncière Professionnelle au Cameroun" />
+    <title>SNS Foncier — Gestion Foncière Cameroun</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+
+    <!-- Firebase SDK (compat — fonctionne sans build) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+    <!-- Sync Firebase → localStorage (doit se charger avant l'app) -->
+    <script src="firebase.js"></script>
+  </head>
+  <body>
+    <!-- Écran de chargement pendant la sync Firebase -->
+    <div id="loading-screen" style="
+      position: fixed; inset: 0;
+      background: #F5F0E8;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Inter', system-ui, sans-serif;
+      z-index: 9999;
+    ">
+      <div style="font-size: 40px; margin-bottom: 16px;">🏠</div>
+      <div style="font-weight: 800; font-size: 18px; color: #1B4332; margin-bottom: 6px;">SNS Foncier</div>
+      <div style="font-size: 13px; color: #78716C; margin-bottom: 20px;">Synchronisation en cours...</div>
+      <div style="width: 180px; height: 4px; background: #E8E0D4; border-radius: 10px; overflow: hidden;">
+        <div id="loading-bar" style="
+          height: 100%; width: 0%; background: #1B4332;
+          border-radius: 10px;
+          animation: loadBar 1.5s ease-in-out infinite;
+        "></div>
+      </div>
+      <style>
+        @keyframes loadBar {
+          0%   { width: 0%;   margin-left: 0%; }
+          50%  { width: 60%;  margin-left: 20%; }
+          100% { width: 0%;   margin-left: 100%; }
+        }
+      </style>
+    </div>
+
+    <div id="root"></div>
+
+    <script>
+      function loadApp() {
+        const script = document.createElement("script");
+        script.src = "app.js";
+        script.onload = function () {
+          // Masquer l'écran de chargement
+          const loader = document.getElementById("loading-screen");
+          if (loader) {
+            loader.style.opacity = "0";
+            loader.style.transition = "opacity 0.4s ease";
+            setTimeout(() => loader.remove(), 400);
+          }
+          // Lancer l'animation de la page de connexion
+          const anim = document.createElement("script");
+          anim.src = "login-anim.js";
+          document.body.appendChild(anim);
+        };
+        document.body.appendChild(script);
+      }
+
+      // Attendre la sync Firebase (max 4 secondes), puis lancer l'app
+      const timeout = new Promise(resolve => setTimeout(resolve, 4000));
+      Promise.race([window.__firebaseReady, timeout])
+        .then(loadApp)
+        .catch(loadApp);
+    </script>
+  </body>
+</html>
