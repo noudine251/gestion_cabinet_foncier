@@ -1,8 +1,5 @@
 // ============================================================
-//  SNS Foncier — Migration totale Firestore
-//  Aucune donnée app dans localStorage.
-//  Toutes les lectures/écritures passent par memStore ↔ Firestore.
-//  onSnapshot → rerenderApp() met à jour tous les navigateurs.
+//  SNS Foncier — Migration totale Firestore + Sync temps réel
 // ============================================================
 
 const firebaseConfig = {
@@ -18,38 +15,35 @@ const APP_KEYS    = ["sns4-req", "sns4-dos", "sns4-users"];
 const DOC_PATH    = "gestion-fonciere/data";
 const WRITE_TOKEN = "SNSFoncier@2024#Secure";
 
-// ── Initialisation Firebase ──────────────────────────────────
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ── Store mémoire (source de vérité pour les données app) ────
+// ── Store mémoire (source de vérité, plus de localStorage) ───
 const memStore = Object.create(null);
 
-// ── Nettoyage : supprimer les anciennes données du vrai localStorage ─
+// ── Nettoyer les anciennes données dans le vrai localStorage ──
 APP_KEYS.forEach(k => {
-  try { Storage.prototype.removeItem.call(window.localStorage, k); } catch(_) {}
+  try { Storage.prototype.removeItem.call(window.localStorage, k); } catch (_) {}
 });
 
-// ── Override Storage.prototype (Chrome, Firefox, Safari, mobile) ─
-// On intercepte le prototype, pas l'objet instance — seule méthode
-// garantie de fonctionner sur tous les navigateurs.
+// ── Override Storage.prototype (Chrome, Firefox, Safari, iOS) ─
 const _proto = {
   get : Storage.prototype.getItem,
   set : Storage.prototype.setItem,
   del : Storage.prototype.removeItem,
 };
 
-Storage.prototype.getItem = function(key) {
+Storage.prototype.getItem = function (key) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     return (key in memStore) ? memStore[key] : null;
   }
   return _proto.get.call(this, key);
 };
 
-Storage.prototype.setItem = function(key, val) {
+Storage.prototype.setItem = function (key, val) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     const str = String(val);
-    memStore[key] = str;
+    memStore[key]  = str;
     lastLocalWrite = Date.now();
     db.doc(DOC_PATH)
       .set({ [key]: str, _token: WRITE_TOKEN }, { merge: true })
@@ -59,7 +53,7 @@ Storage.prototype.setItem = function(key, val) {
   _proto.set.call(this, key, val);
 };
 
-Storage.prototype.removeItem = function(key) {
+Storage.prototype.removeItem = function (key) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     delete memStore[key];
     return;
@@ -67,72 +61,87 @@ Storage.prototype.removeItem = function(key) {
   _proto.del.call(this, key);
 };
 
-// ── Timestamp du dernier write local (anti-boucle) ───────────
+// ── Anti-boucle ──────────────────────────────────────────────
 let lastLocalWrite = 0;
 
+// ── Cache du code app.js (chargé une seule fois en mémoire) ──
+let appCode = null;
+
+async function getAppCode() {
+  if (appCode) return appCode;
+  const res = await fetch('app.js');
+  appCode = await res.text();
+  return appCode;
+}
+
 // ── Re-rendu React sans rechargement de page ─────────────────
-function rerenderApp() {
+// On injecte app.js comme script INLINE → toujours exécuté par
+// le navigateur (pas de déduplication sur les scripts sans src).
+async function rerenderApp() {
   const wrapper = document.getElementById('app-wrapper');
   if (!wrapper) { window.location.reload(); return; }
 
-  // Nouveau conteneur React propre (sans marqueurs internes React)
-  wrapper.innerHTML = '<div id="root"></div>';
+  try {
+    const code = await getAppCode();
 
-  // Retirer l'ancien script app.js
-  document.querySelectorAll('script[data-sns-app]').forEach(s => s.remove());
+    // Nouveau conteneur React propre (sans marqueurs internes React)
+    wrapper.innerHTML = '<div id="root"></div>';
 
-  // Re-exécuter app.js depuis le cache navigateur (instantané)
-  const s = document.createElement('script');
-  s.src = 'app.js';
-  s.setAttribute('data-sns-app', '1');
-  document.body.appendChild(s);
+    // Supprimer les précédents scripts app.js injectés
+    document.querySelectorAll('script[data-sns-app]').forEach(s => s.remove());
 
-  console.log("[Firebase] ✅ Interface mise à jour (temps réel)");
+    // Script inline → exécuté immédiatement, garanti par tous les navigateurs
+    const s = document.createElement('script');
+    s.textContent = code;
+    s.setAttribute('data-sns-app', '1');
+    document.body.appendChild(s);
+
+    console.log("[Firebase] ✅ Interface mise à jour en temps réel");
+  } catch (err) {
+    console.warn("[Firebase] rerenderApp échoué → rechargement :", err.message);
+    window.location.reload();
+  }
 }
 
-// ── 1. Chargement initial : données fraîches depuis le serveur ─
+// ── Chargement initial : données fraîches depuis le serveur ───
 async function syncFromFirebase() {
   try {
-    // source:'server' contourne le cache IndexedDB offline — garantit des données fraîches
     const snap = await db.doc(DOC_PATH).get({ source: 'server' });
     if (snap.exists) {
       const data = snap.data();
       APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
       console.log("[Firebase] ✅ Données chargées depuis Firestore");
     } else {
-      console.log("[Firebase] 📭 Document vide — premier démarrage");
+      console.log("[Firebase] 📭 Pas encore de données cloud");
     }
   } catch (err) {
-    // Hors-ligne : fallback cache
-    console.warn("[Firebase] ⚠️ Serveur inaccessible, tentative cache :", err.message);
+    // Hors-ligne : fallback sur le cache local
+    console.warn("[Firebase] ⚠️ Serveur inaccessible, cache :", err.message);
     try {
       const snap = await db.doc(DOC_PATH).get({ source: 'cache' });
       if (snap.exists) {
         const data = snap.data();
         APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
-        console.log("[Firebase] ✅ Données chargées depuis le cache hors-ligne");
+        console.log("[Firebase] ✅ Données depuis cache offline");
       }
     } catch (_) {
-      console.warn("[Firebase] ⚠️ Aucune donnée disponible (hors-ligne)");
+      console.warn("[Firebase] ⚠️ Aucune donnée disponible");
     }
   }
 }
 
-// ── 2. Listener temps réel (tous navigateurs / appareils) ─────
+// ── Listener temps réel (tous navigateurs / appareils) ────────
 db.doc(DOC_PATH).onSnapshot(
-  { includeMetadataChanges: true },
   snapshot => {
-    // Écriture locale non confirmée → ignorer
+    // Écriture locale non encore confirmée par le serveur → ignorer
     if (snapshot.metadata.hasPendingWrites) return;
-    // Données venant du cache IndexedDB (pas du serveur) → ignorer
-    if (snapshot.metadata.fromCache) return;
     // Notre propre écriture récente (< 2 s) → ignorer
     if (Date.now() - lastLocalWrite < 2000) return;
-    // App pas encore montée (snapshot initial) → ignorer
+    // App pas encore montée → ignorer
     if (!window.__appReady) return;
     if (!snapshot.exists) return;
 
-    // Mettre à jour le store mémoire avec les données du serveur
+    // Mettre à jour le store mémoire
     const data = snapshot.data();
     APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
 
@@ -142,5 +151,5 @@ db.doc(DOC_PATH).onSnapshot(
   err => console.warn("[Firebase] ⚠️ Listener:", err.message)
 );
 
-// ── 3. Promesse exposée pour index.html ──────────────────────
+// ── Promesse exposée pour index.html ─────────────────────────
 window.__firebaseReady = syncFromFirebase();
