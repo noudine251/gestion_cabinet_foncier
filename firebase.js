@@ -14,8 +14,9 @@ const firebaseConfig = {
 };
 
 // Clés localStorage utilisées par l'application
-const APP_KEYS  = ["sns4-req", "sns4-dos", "sns4-users"];
-const DOC_PATH  = "gestion-fonciere/data";
+const APP_KEYS   = ["sns4-req", "sns4-dos", "sns4-users"];
+const DOC_PATH   = "gestion-fonciere/data";
+const WRITE_TOKEN = "SNSFoncier@2024#Secure";
 
 // ─── Initialisation Firebase ────────────────────────────────
 firebase.initializeApp(firebaseConfig);
@@ -54,7 +55,7 @@ localStorage.setItem = function (key, value) {
   if (APP_KEYS.includes(key)) {
     lastLocalWrite = Date.now();
     db.doc(DOC_PATH)
-      .set({ [key]: value }, { merge: true })
+      .set({ [key]: value, _token: WRITE_TOKEN }, { merge: true })
       .catch(err => console.warn("[Firebase] ⚠️ Écriture:", err.message));
   }
 };

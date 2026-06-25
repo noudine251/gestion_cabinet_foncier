@@ -69,8 +69,8 @@
         document.body.appendChild(script);
       }
 
-      // Attendre la sync Firebase (max 4 secondes), puis lancer l'app
-      const timeout = new Promise(resolve => setTimeout(resolve, 4000));
+      // Attendre la sync Firebase (max 2 secondes), puis lancer l'app
+      const timeout = new Promise(resolve => setTimeout(resolve, 2000));
       Promise.race([window.__firebaseReady, timeout])
         .then(loadApp)
         .catch(loadApp);
