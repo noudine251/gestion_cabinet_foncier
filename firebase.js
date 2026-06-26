@@ -16,7 +16,19 @@ var PRELOAD_KEY = "__sns_preload";
 var SESSION_KEY = "__sns_session";
 
 firebase.initializeApp(firebaseConfig);
-var db = firebase.firestore();
+var db   = firebase.firestore();
+var auth = firebase.auth();
+
+// App secondaire pour créer des comptes sans déconnecter l'admin
+var _secondaryApp = firebase.initializeApp(firebaseConfig, 'sns-secondary');
+var authSecondary = _secondaryApp.auth();
+
+// Exposés globalement pour le composant React (app.js)
+window.__snsAuth          = auth;
+window.__snsAuthSecondary = authSecondary;
+
+// Persistance locale : l'utilisateur reste connecté après refresh
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
 
 // Store mémoire (remplace localStorage pour les clés APP_KEYS)
 var memStore = Object.create(null);
