@@ -1,5 +1,7 @@
 // ============================================================
-//  SNS Foncier — Migration totale Firestore + Sync temps réel
+//  SNS Foncier — Sync Firestore temps réel
+//  Stratégie : injection directe dans le state React (fiber)
+//  → zéro rechargement, navigation préservée
 // ============================================================
 
 const firebaseConfig = {
@@ -14,7 +16,7 @@ const firebaseConfig = {
 const APP_KEYS    = ["sns4-req", "sns4-dos", "sns4-users"];
 const DOC_PATH    = "gestion-fonciere/data";
 const WRITE_TOKEN = "SNSFoncier@2024#Secure";
-const PRELOAD_KEY = "__sns_preload"; // clé sessionStorage pour le reload rapide
+const PRELOAD_KEY = "__sns_preload";
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
@@ -22,7 +24,7 @@ const db = firebase.firestore();
 // ── Store mémoire ────────────────────────────────────────────
 const memStore = Object.create(null);
 
-// ── Supprimer toute surcharge d'instance de versions précédentes ─
+// ── Nettoyer les surcharges d'instance des versions précédentes ─
 try { delete localStorage.getItem;    } catch (_) {}
 try { delete localStorage.setItem;    } catch (_) {}
 try { delete localStorage.removeItem; } catch (_) {}
@@ -30,20 +32,18 @@ APP_KEYS.forEach(k => {
   try { Storage.prototype.removeItem.call(window.localStorage, k); } catch (_) {}
 });
 
-// ── Override Storage.prototype (Chrome, Firefox, Safari, iOS) ─
+// ── Override Storage.prototype ────────────────────────────────
 const _proto = {
   get : Storage.prototype.getItem,
   set : Storage.prototype.setItem,
   del : Storage.prototype.removeItem,
 };
-
 Storage.prototype.getItem = function (key) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     return (key in memStore) ? memStore[key] : null;
   }
   return _proto.get.call(this, key);
 };
-
 Storage.prototype.setItem = function (key, val) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     const str = String(val);
@@ -55,7 +55,6 @@ Storage.prototype.setItem = function (key, val) {
   }
   _proto.set.call(this, key, val);
 };
-
 Storage.prototype.removeItem = function (key) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     delete memStore[key];
@@ -64,69 +63,120 @@ Storage.prototype.removeItem = function (key) {
   _proto.del.call(this, key);
 };
 
+// ── Injection directe dans le state React ────────────────────
+// L'analyse de app.js révèle que le composant principal kp() a :
+//   hook 0 : user (null)
+//   hook 1 : reqs []          ← sns4-req
+//   hook 2 : dossiers []      ← sns4-dos
+//   hook 3 : users [admin]    ← sns4-users
+//   hook 4 : loading (bool)
+//   hook 5 : currentTab ("dashboard"/"dossiers"/"requerants"/"users")
+//
+// On trouve le composant via le React fiber tree, puis on appelle
+// ses dispatch() directement — équivalent à setReqs()/setDossiers()/setUsers().
+// La navigation (currentTab) n'est jamais touchée.
+
+const TAB_VALUES = new Set(["dashboard", "dossiers", "requerants", "users"]);
+
+function findAppSetters() {
+  const root = document.getElementById('root');
+  if (!root) return null;
+
+  // Clé React 18 : __reactFiber$xxxx
+  const fiberKey = Object.keys(root).find(k => k.startsWith('__reactFiber'));
+  if (!fiberKey) return null;
+
+  function check(fiber, depth) {
+    if (!fiber || depth > 500) return null;
+    try {
+      const h = fiber.memoizedState;
+      if (h &&
+          Array.isArray(h.next?.memoizedState) &&                             // hook 1 : reqs
+          Array.isArray(h.next?.next?.memoizedState) &&                       // hook 2 : dossiers
+          Array.isArray(h.next?.next?.next?.memoizedState) &&                 // hook 3 : users
+          TAB_VALUES.has(h.next?.next?.next?.next?.next?.memoizedState)) {    // hook 5 : tab
+        return {
+          setReqs:     h.next.queue.dispatch,
+          setDossiers: h.next.next.queue.dispatch,
+          setUsers:    h.next.next.next.queue.dispatch,
+        };
+      }
+    } catch (_) {}
+    return check(fiber.child, depth + 1) || check(fiber.sibling, depth + 1);
+  }
+
+  return check(root[fiberKey], 0);
+}
+
 // ── Chargement initial ────────────────────────────────────────
-// Si sessionStorage contient des données pré-chargées (reload sync),
-// on les utilise directement → résolution instantanée, zéro requête réseau.
 async function syncFromFirebase() {
+  // Reload de sync : données déjà dans sessionStorage → instantané
   const preload = sessionStorage.getItem(PRELOAD_KEY);
   if (preload) {
     try {
       const data = JSON.parse(preload);
       APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
       sessionStorage.removeItem(PRELOAD_KEY);
-      console.log("[Firebase] ⚡ Données pré-chargées — sync instantané");
-      return; // pas besoin de fetch Firestore
+      console.log("[Firebase] ⚡ Données pré-chargées");
+      return;
     } catch (_) {}
   }
-
-  // Chargement normal : données fraîches depuis le serveur
+  // Chargement normal depuis le serveur
   try {
     const snap = await db.doc(DOC_PATH).get({ source: 'server' });
     if (snap.exists) {
       const data = snap.data();
       APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
-      console.log("[Firebase] ✅ Données chargées depuis Firestore");
-    } else {
-      console.log("[Firebase] 📭 Pas encore de données cloud");
+      console.log("[Firebase] ✅ Données chargées");
     }
   } catch (err) {
-    console.warn("[Firebase] ⚠️ Serveur inaccessible, tentative cache :", err.message);
+    console.warn("[Firebase] ⚠️ Serveur inaccessible, cache :", err.message);
     try {
       const snap = await db.doc(DOC_PATH).get({ source: 'cache' });
       if (snap.exists) {
         const data = snap.data();
         APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
-        console.log("[Firebase] ✅ Données depuis cache offline");
       }
     } catch (_) {}
   }
 }
 
 // ── Listener temps réel ──────────────────────────────────────
-// Quand un autre navigateur modifie les données :
-//   1. On stocke les nouvelles données dans sessionStorage (survit au reload)
-//   2. window.location.reload() recharge la page
-//   3. syncFromFirebase() trouve sessionStorage → charge instantanément
-//   4. L'écran de chargement est caché immédiatement (voir index.html)
-// → Résultat : mise à jour visible en < 200 ms, sans action utilisateur.
 db.doc(DOC_PATH).onSnapshot(
   snapshot => {
-    if (snapshot.metadata.hasPendingWrites) return; // ma propre écriture → ignorer
-    if (!window.__appReady) return;                 // app pas encore montée → ignorer
+    if (snapshot.metadata.hasPendingWrites) return;
+    if (!window.__appReady) return;
     if (!snapshot.exists) return;
 
     const data = snapshot.data();
-
-    // Vérifier qu'il y a réellement un changement dans les données app
     const hasChange = APP_KEYS.some(k => data[k] !== undefined && data[k] !== memStore[k]);
     if (!hasChange) return;
 
-    // Pré-charger les données dans sessionStorage avant le reload
+    // Mettre à jour le store mémoire
+    APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
+
+    console.log("[Firebase] 🔄 Changement distant reçu → injection React");
+
+    // ── Stratégie 1 : injection directe dans le state React ──
+    // Navigation préservée, aucun rechargement.
+    const setters = findAppSetters();
+    if (setters) {
+      try {
+        if (data["sns4-req"]   !== undefined) setters.setReqs(JSON.parse(data["sns4-req"]));
+        if (data["sns4-dos"]   !== undefined) setters.setDossiers(JSON.parse(data["sns4-dos"]));
+        if (data["sns4-users"] !== undefined) setters.setUsers(JSON.parse(data["sns4-users"]));
+        console.log("[Firebase] ✅ State React mis à jour directement");
+        return;
+      } catch (e) {
+        console.warn("[Firebase] Injection échouée :", e.message);
+      }
+    }
+
+    // ── Stratégie 2 : reload rapide via sessionStorage (fallback) ──
+    console.warn("[Firebase] Fiber non trouvé → reload rapide");
     const preload = {};
     APP_KEYS.forEach(k => { if (data[k] !== undefined) preload[k] = data[k]; });
     sessionStorage.setItem(PRELOAD_KEY, JSON.stringify(preload));
-
-    console.log("[Firebase] 🔄 Changement distant → rechargement rapide");
     window.location.reload();
   },
   err => console.warn("[Firebase] ⚠️ Listener:", err.message)
