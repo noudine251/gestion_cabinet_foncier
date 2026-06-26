@@ -11,11 +11,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
 
-    <!-- Firebase SDK (compat — fonctionne sans build) -->
+    <!-- Firebase SDK (compat) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
-    <!-- Migration Firestore : intercepte Storage.prototype avant le chargement de l'app -->
+    <!--
+      firebase.js installe __REACT_DEVTOOLS_GLOBAL_HOOK__ et intercepte
+      Storage.prototype — doit être chargé AVANT app.js
+    -->
     <script src="firebase.js"></script>
   </head>
   <body>
@@ -61,37 +64,36 @@
         var script = document.createElement("script");
         script.src = "app.js";
         script.setAttribute("data-sns-app", "1");
-        script.onload = function () {
+        script.onload = function() {
           window.__appReady = true;
 
-          // Masquer le loading screen (chargement normal)
+          // Masquer l'écran de chargement (chargement normal)
           var loader = document.getElementById("loading-screen");
           if (loader) {
             loader.style.opacity = "0";
             loader.style.transition = "opacity 0.4s ease";
-            setTimeout(function () { loader.remove(); }, 400);
+            setTimeout(function() { loader.remove(); }, 400);
           }
 
-          // Lancer l'animation de connexion
+          // Animation de connexion
           var anim = document.createElement("script");
           anim.src = "login-anim.js";
           document.body.appendChild(anim);
 
           // ── Restaurer la session après un fallback reload ──
-          // Si l'injection React a échoué et qu'on a rechargé la page,
-          // on remet l'utilisateur connecté sans qu'il ait à se reconnecter.
+          // Si l'injection directe a échoué et qu'on a rechargé,
+          // on remet l'utilisateur sans qu'il ait à se reconnecter.
           var savedSession = sessionStorage.getItem("__sns_session");
           if (savedSession) {
             sessionStorage.removeItem("__sns_session");
-            (function tryRestore(attempt) {
-              var s = window.__snsFindSetters && window.__snsFindSetters();
+            (function tryRestore(n) {
+              var s = window.__snsSetters;
               if (s && s.setUser && s.getUser) {
-                // Ne restaurer que si aucun utilisateur n'est déjà connecté
                 if (!s.getUser()) {
                   try { s.setUser(JSON.parse(savedSession)); } catch (_) {}
                 }
-              } else if (attempt < 20) {
-                setTimeout(function () { tryRestore(attempt + 1); }, 100);
+              } else if (n < 30) {
+                setTimeout(function() { tryRestore(n + 1); }, 100);
               }
             })(0);
           }
@@ -102,7 +104,7 @@
       if (isSyncReload) {
         window.__firebaseReady.then(loadApp).catch(loadApp);
       } else {
-        var timeout = new Promise(function (resolve) { setTimeout(resolve, 2000); });
+        var timeout = new Promise(function(resolve) { setTimeout(resolve, 2000); });
         Promise.race([window.__firebaseReady, timeout]).then(loadApp).catch(loadApp);
       }
     </script>

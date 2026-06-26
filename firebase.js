@@ -1,6 +1,6 @@
 // SNS Foncier — Sync Firestore temps réel
 
-const firebaseConfig = {
+var firebaseConfig = {
   apiKey:            "AIzaSyDOEKpjxz7Tzh74xaF8E0yktC7SZTulHws",
   authDomain:        "sns-foncier.firebaseapp.com",
   projectId:         "sns-foncier",
@@ -9,162 +9,189 @@ const firebaseConfig = {
   appId:             "1:1067152720019:web:c5bb13cdf153704b940d66"
 };
 
-const APP_KEYS    = ["sns4-req", "sns4-dos", "sns4-users"];
-const DOC_PATH    = "gestion-fonciere/data";
-const WRITE_TOKEN = "SNSFoncier@2024#Secure";
-const PRELOAD_KEY = "__sns_preload";
-const SESSION_KEY = "__sns_session";
+var APP_KEYS    = ["sns4-req", "sns4-dos", "sns4-users"];
+var DOC_PATH    = "gestion-fonciere/data";
+var WRITE_TOKEN = "SNSFoncier@2024#Secure";
+var PRELOAD_KEY = "__sns_preload";
+var SESSION_KEY = "__sns_session";
 
 firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+var db = firebase.firestore();
 
 // Store mémoire (remplace localStorage pour les clés APP_KEYS)
-const memStore = Object.create(null);
+var memStore = Object.create(null);
 
 // Nettoyer les surcharges d'instance des versions précédentes
 try { delete localStorage.getItem;    } catch (_) {}
 try { delete localStorage.setItem;    } catch (_) {}
 try { delete localStorage.removeItem; } catch (_) {}
-APP_KEYS.forEach(k => {
+APP_KEYS.forEach(function(k) {
   try { Storage.prototype.removeItem.call(window.localStorage, k); } catch (_) {}
 });
 
-// Override Storage.prototype (fonctionne sur Safari/iOS contrairement à l'override d'instance)
-const _proto = {
+// Override Storage.prototype
+var _proto = {
   get : Storage.prototype.getItem,
   set : Storage.prototype.setItem,
   del : Storage.prototype.removeItem,
 };
-Storage.prototype.getItem = function (key) {
-  if (this === window.localStorage && APP_KEYS.includes(key)) {
+Storage.prototype.getItem = function(key) {
+  if (this === window.localStorage && APP_KEYS.indexOf(key) !== -1) {
     return (key in memStore) ? memStore[key] : null;
   }
   return _proto.get.call(this, key);
 };
-Storage.prototype.setItem = function (key, val) {
-  if (this === window.localStorage && APP_KEYS.includes(key)) {
-    const str = String(val);
+Storage.prototype.setItem = function(key, val) {
+  if (this === window.localStorage && APP_KEYS.indexOf(key) !== -1) {
+    var str = String(val);
     memStore[key] = str;
     db.doc(DOC_PATH)
-      .set({ [key]: str, _token: WRITE_TOKEN }, { merge: true })
-      .catch(e => console.warn("[Firebase] Write:", e.message));
+      .set(Object.assign({ _token: WRITE_TOKEN }, (function(o){ o[key]=str; return o; })({})), { merge: true })
+      .catch(function(e) { console.warn("[SNS] Write:", e.message); });
     return;
   }
   _proto.set.call(this, key, val);
 };
-Storage.prototype.removeItem = function (key) {
-  if (this === window.localStorage && APP_KEYS.includes(key)) {
+Storage.prototype.removeItem = function(key) {
+  if (this === window.localStorage && APP_KEYS.indexOf(key) !== -1) {
     delete memStore[key];
     return;
   }
   _proto.del.call(this, key);
 };
 
-// ── Détection du composant kp() via le React fiber tree ──────
-// kp() a : hook0=user, hook1=reqs[], hook2=dossiers[], hook3=users[],
-//           hook4=loading(bool), hook5=currentTab(string)
-// On cherche un composant avec 3 hooks tableau + 1 hook tab-string.
-// La détection est volontairement laxiste (pas de positions fixes)
-// pour résister aux différences de build.
+// ── Capture des setters React via __REACT_DEVTOOLS_GLOBAL_HOOK__ ─
+// React appelle ce hook après CHAQUE commit (rendu confirmé).
+// On l'utilise pour extraire et mettre à jour les setState de kp()
+// immédiatement après chaque rendu, sans attendre onSnapshot.
 
-const TAB_VALUES = new Set(["dashboard", "dossiers", "requerants", "users"]);
+var TAB_VALUES = { dashboard: 1, dossiers: 1, requerants: 1, users: 1 };
 
-function findAppSetters() {
-  const root = document.getElementById('root');
-  if (!root) return null;
+function extractSettersFromRoot(fiberRoot) {
+  if (!fiberRoot || !fiberRoot.current) return;
+  var seen = new WeakSet();
 
-  const fiberKey = Object.keys(root).find(
-    k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
-  );
-  if (!fiberKey) return null;
-
-  const seen = new WeakSet();
-
-  function walk(fiber, depth) {
-    if (!fiber || depth > 500 || seen.has(fiber)) return null;
+  function walk(fiber, d) {
+    if (!fiber || d > 400 || seen.has(fiber)) return;
     seen.add(fiber);
 
     try {
-      // Collecter les hooks de ce fiber
-      const hooks = [];
-      let h = fiber.memoizedState;
-      let lim = 0;
-      while (h && lim++ < 50) {
-        if (h !== null && typeof h === 'object' && 'memoizedState' in h) {
+      var hooks = [];
+      var h = fiber.memoizedState;
+      var lim = 0;
+      while (h && lim++ < 60) {
+        if (h && typeof h === 'object' && 'memoizedState' in h) {
           hooks.push(h);
           h = h.next;
         } else break;
       }
 
       if (hooks.length >= 6) {
-        // Chercher le hook dont la valeur est un nom de tab
-        const tabIdx = hooks.findIndex(
-          h => typeof h.memoizedState === 'string' && TAB_VALUES.has(h.memoizedState)
-        );
+        // kp() a un hook dont la valeur est un nom de tab
+        var hasTab = false;
+        for (var i = 0; i < hooks.length; i++) {
+          if (typeof hooks[i].memoizedState === 'string' && TAB_VALUES[hooks[i].memoizedState]) {
+            hasTab = true;
+            break;
+          }
+        }
 
-        // Le tab doit apparaître au moins en position 4 (après user+reqs+dossiers+users)
-        if (tabIdx >= 4) {
-          // Trouver les hooks tableau avec dispatch() avant le hook tab
-          const arrHooks = [];
-          for (let i = 0; i < tabIdx; i++) {
-            const hk = hooks[i];
+        if (hasTab) {
+          // Trouver les 3 hooks tableau avec dispatch (reqs, dossiers, users)
+          var arr = [];
+          for (var j = 0; j < hooks.length; j++) {
+            var hk = hooks[j];
             if (Array.isArray(hk.memoizedState) &&
                 hk.queue && typeof hk.queue.dispatch === 'function') {
-              arrHooks.push({ idx: i, hook: hk });
+              arr.push({ idx: j, hook: hk });
             }
           }
 
-          if (arrHooks.length >= 3) {
-            // Le hook juste avant le 1er tableau = hook user
-            const firstArrIdx = arrHooks[0].idx;
-            const userHook    = firstArrIdx > 0 ? hooks[firstArrIdx - 1] : null;
-            return {
-              setReqs:     arrHooks[0].hook.queue.dispatch,
-              setDossiers: arrHooks[1].hook.queue.dispatch,
-              setUsers:    arrHooks[2].hook.queue.dispatch,
-              setUser:     userHook && userHook.queue ? userHook.queue.dispatch : null,
-              getUser:     function() { return userHook ? userHook.memoizedState : null; },
+          if (arr.length >= 3) {
+            var firstIdx = arr[0].idx;
+            var uHook = firstIdx > 0 ? hooks[firstIdx - 1] : null;
+            // Mettre à jour les setters globaux
+            window.__snsSetters = {
+              setReqs:     arr[0].hook.queue.dispatch,
+              setDossiers: arr[1].hook.queue.dispatch,
+              setUsers:    arr[2].hook.queue.dispatch,
+              setUser:     (uHook && uHook.queue) ? uHook.queue.dispatch : null,
+              getUser:     function() { return uHook ? uHook.memoizedState : null; }
             };
+            return;
           }
         }
       }
     } catch (_) {}
 
-    return walk(fiber.child, depth + 1) || walk(fiber.sibling, depth + 1);
+    walk(fiber.child, d + 1);
+    walk(fiber.sibling, d + 1);
   }
 
-  return walk(root[fiberKey], 0);
+  walk(fiberRoot.current, 0);
 }
 
-// Exposé pour index.html (restauration de session après fallback reload)
-window.__snsFindSetters = findAppSetters;
+// Installer/fusionner avec __REACT_DEVTOOLS_GLOBAL_HOOK__
+// Ce hook DOIT être installé avant le chargement de app.js
+(function() {
+  var existing = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  if (existing) {
+    // React DevTools déjà installé — on enveloppe onCommitFiberRoot
+    var orig = existing.onCommitFiberRoot;
+    existing.onCommitFiberRoot = function(id, root, priorityLevel) {
+      try { if (orig) orig.apply(this, arguments); } catch (_) {}
+      try { extractSettersFromRoot(root); } catch (_) {}
+    };
+  } else {
+    // Pas de DevTools — installer un hook minimal
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      renderers: new Map(),
+      supportsFiber: true,
+      isDisabled: false,
+      hasUnsupportedRendererAttached: false,
+      _nextID: 0,
+      inject: function() { return ++this._nextID; },
+      onScheduleRoot: function() {},
+      onCommitFiberRoot: function(id, root) {
+        try { extractSettersFromRoot(root); } catch (_) {}
+      },
+      onCommitFiberUnmount: function() {},
+      onPostCommitFiberRoot: function() {},
+      onUncaughtError: function() {},
+      onCaughtError: function() {},
+      checkDCE: function() {},
+    };
+  }
+})();
 
 // ── Chargement initial depuis Firestore ───────────────────────
-async function syncFromFirebase() {
-  const preload = sessionStorage.getItem(PRELOAD_KEY);
+function syncFromFirebase() {
+  var preload = sessionStorage.getItem(PRELOAD_KEY);
   if (preload) {
     try {
-      const data = JSON.parse(preload);
-      APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
+      var data = JSON.parse(preload);
+      APP_KEYS.forEach(function(k) { if (data[k] !== undefined) memStore[k] = data[k]; });
       sessionStorage.removeItem(PRELOAD_KEY);
-      return;
+      return Promise.resolve();
     } catch (_) {}
   }
-  try {
-    const snap = await db.doc(DOC_PATH).get({ source: 'server' });
-    if (snap.exists) {
-      const data = snap.data();
-      APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
-    }
-  } catch (_) {
-    try {
-      const snap = await db.doc(DOC_PATH).get({ source: 'cache' });
+  return db.doc(DOC_PATH).get({ source: 'server' })
+    .then(function(snap) {
       if (snap.exists) {
-        const data = snap.data();
-        APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
+        var d = snap.data();
+        APP_KEYS.forEach(function(k) { if (d[k] !== undefined) memStore[k] = d[k]; });
       }
-    } catch (_) {}
-  }
+    })
+    .catch(function() {
+      return db.doc(DOC_PATH).get({ source: 'cache' })
+        .then(function(snap) {
+          if (snap.exists) {
+            var d = snap.data();
+            APP_KEYS.forEach(function(k) { if (d[k] !== undefined) memStore[k] = d[k]; });
+          }
+        })
+        .catch(function() {});
+    });
 }
 
 // ── Listener temps réel ──────────────────────────────────────
@@ -183,28 +210,24 @@ db.doc(DOC_PATH).onSnapshot(
     // Mettre à jour le store mémoire
     APP_KEYS.forEach(function(k) { if (data[k] !== undefined) memStore[k] = data[k]; });
 
-    var setters = findAppSetters();
-
-    // ── Stratégie 1 : injection directe dans React ──────────
-    // Aucun rechargement, navigation préservée
-    if (setters) {
+    // ── Stratégie 1 : injection directe (setters capturés par DevTools hook) ──
+    var s = window.__snsSetters;
+    if (s) {
       try {
         var ok = false;
         var v;
-
         if (data["sns4-req"] !== undefined) {
           v = data["sns4-req"] ? JSON.parse(data["sns4-req"]) : [];
-          if (Array.isArray(v)) { setters.setReqs(v); ok = true; }
+          if (Array.isArray(v)) { s.setReqs(v); ok = true; }
         }
         if (data["sns4-dos"] !== undefined) {
           v = data["sns4-dos"] ? JSON.parse(data["sns4-dos"]) : [];
-          if (Array.isArray(v)) { setters.setDossiers(v); ok = true; }
+          if (Array.isArray(v)) { s.setDossiers(v); ok = true; }
         }
         if (data["sns4-users"] !== undefined) {
           v = data["sns4-users"] ? JSON.parse(data["sns4-users"]) : [];
-          if (Array.isArray(v)) { setters.setUsers(v); ok = true; }
+          if (Array.isArray(v)) { s.setUsers(v); ok = true; }
         }
-
         if (ok) return; // succès — pas de rechargement
       } catch (_) {}
     }
@@ -212,10 +235,8 @@ db.doc(DOC_PATH).onSnapshot(
     // ── Stratégie 2 : reload rapide (fallback) ──────────────
     // Préserver la session pour ne pas retourner à la page de connexion
     try {
-      var currentUser = setters && setters.getUser ? setters.getUser() : null;
-      if (currentUser) {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
-      }
+      var user = s && s.getUser ? s.getUser() : null;
+      if (user) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
     } catch (_) {}
 
     var preload = {};
@@ -223,7 +244,7 @@ db.doc(DOC_PATH).onSnapshot(
     sessionStorage.setItem(PRELOAD_KEY, JSON.stringify(preload));
     window.location.reload();
   },
-  function(err) { console.warn("[Firebase] Listener:", err.message); }
+  function(err) { console.warn("[SNS] Listener:", err.message); }
 );
 
 window.__firebaseReady = syncFromFirebase();
