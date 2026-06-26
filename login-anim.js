@@ -20,6 +20,61 @@
     acc  : 'rgba(80,255,180,',   // accent vert menthe (coord labels)
   };
 
+  /* ── Patch DOM : retire les emojis + remplace titre SNS ── */
+  function removeEmojis(node) {
+    if (!node) return;
+    if (node.nodeType === 3) {
+      var v = node.nodeValue;
+      if (!v) return;
+      var c = v
+        .replace(/([\uD800-\uDBFF][\uDC00-\uDFFF])/g, '')  // surrogates (U+10000+)
+        .replace(/[☀-➿]/g, '')                    // misc symbols (☀ ★ ✅ ❌ ⚠ …)
+        .replace(/[⬀-⯿]/g, '')                    // misc arrows (⭐ …)
+        .replace(/[︀-️‍]/g, '');             // variation selectors + ZWJ
+      if (c !== v) node.nodeValue = c;
+    } else if (node.nodeType === 1 &&
+               node.tagName !== 'SCRIPT' &&
+               node.tagName !== 'STYLE'  &&
+               node.tagName !== 'CANVAS') {
+      for (var i = 0; i < node.childNodes.length; i++) {
+        removeEmojis(node.childNodes[i]);
+      }
+    }
+  }
+
+  function replaceSNSTitle() {
+    var w = document.createTreeWalker(
+      document.body, NodeFilter.SHOW_TEXT, null, false
+    );
+    var n;
+    while ((n = w.nextNode())) {
+      var t = n.nodeValue.trim();
+      if (t === 'SNS' || t === 'SNS Foncier' || t === 'SNS FONCIER') {
+        n.nodeValue = 'BIENVENUE!';
+        break;
+      }
+    }
+  }
+
+  var _patchObsActive = false;
+  function applyPatches() {
+    removeEmojis(document.body);
+    replaceSNSTitle();
+    if (!_patchObsActive) {
+      _patchObsActive = true;
+      var pObs = new MutationObserver(function(muts) {
+        muts.forEach(function(m) {
+          m.addedNodes.forEach(removeEmojis);
+          if (m.type === 'characterData') removeEmojis(m.target);
+        });
+        replaceSNSTitle();
+      });
+      pObs.observe(document.body, {
+        childList: true, subtree: true, characterData: true
+      });
+    }
+  }
+
   /* ── Injection dans le DOM ──────────────────────────────── */
   function tryInject() {
     var bg = document.querySelector(
@@ -29,13 +84,14 @@
     if (bg.dataset.v3) return;
     bg.dataset.v3 = '1';
     run(bg);
+    applyPatches();
 
     /* re-détecter après navigation React */
     new MutationObserver(function () {
       var next = document.querySelector(
         'div[style*="min-height: 100vh"][style*="linear-gradient(135deg"]'
       );
-      if (next && !next.dataset.v3) { next.dataset.v3 = '1'; run(next); }
+      if (next && !next.dataset.v3) { next.dataset.v3 = '1'; run(next); applyPatches(); }
     }).observe(document.body, { childList: true, subtree: true });
   }
 
@@ -355,6 +411,7 @@
   }
 
   /* ── Démarrage ──────────────────────────────────────── */
+  setTimeout(applyPatches, 100);   // retirer emojis dès le premier rendu
   setTimeout(tryInject, 500);
 
 })();
