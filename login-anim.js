@@ -42,15 +42,18 @@
     }
   }
 
-  function replaceSNSTitle() {
+  function styleBienvenue() {
     var w = document.createTreeWalker(
       document.body, NodeFilter.SHOW_TEXT, null, false
     );
     var n;
     while ((n = w.nextNode())) {
-      var t = n.nodeValue.trim();
-      if (t === 'SNS' || t === 'SNS Foncier' || t === 'SNS FONCIER') {
-        n.nodeValue = 'BIENVENUE!';
+      if (/^bienvenu/i.test(n.nodeValue.trim())) {
+        var el = n.parentElement;
+        if (el) {
+          el.style.setProperty('color', '#34D399', 'important');
+          el.style.setProperty('font-weight', '800', 'important');
+        }
         break;
       }
     }
@@ -59,7 +62,7 @@
   var _patchObsActive = false;
   function applyPatches() {
     removeEmojis(document.body);
-    replaceSNSTitle();
+    styleBienvenue();
     if (!_patchObsActive) {
       _patchObsActive = true;
       var pObs = new MutationObserver(function(muts) {
@@ -67,7 +70,7 @@
           m.addedNodes.forEach(removeEmojis);
           if (m.type === 'characterData') removeEmojis(m.target);
         });
-        replaceSNSTitle();
+        styleBienvenue();
       });
       pObs.observe(document.body, {
         childList: true, subtree: true, characterData: true
