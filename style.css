@@ -107,27 +107,27 @@ input:focus, select:focus, textarea:focus {
 
 
 /* ============================================================
-   PAGE DE CONNEXION — Bleu Nuit · Cadastre · Glassmorphism
+   PAGE DE CONNEXION — Vert Forêt · Cadastre · Glassmorphism
    ============================================================ */
 
-/* ── Fond bleu nuit ── */
+/* ── Fond vert (couleur de l'application) ── */
 div[style*="min-height: 100vh"][style*="linear-gradient(135deg"] {
-  background: linear-gradient(145deg, #04091a 0%, #071328 55%, #050e20 100%) !important;
+  background: linear-gradient(145deg, #0a1f15 0%, #1B4332 55%, #0d2a1c 100%) !important;
   position: relative !important;
   overflow: hidden !important;
 }
 
-/* Lueurs d'ambiance (halo bleu discret) */
+/* Lueurs d'ambiance (halo vert discret) */
 div[style*="min-height: 100vh"][style*="linear-gradient(135deg"]::before {
   content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 55% 40% at 15% 25%,  rgba(30,80,200,0.12)  0%, transparent 70%),
-    radial-gradient(ellipse 45% 50% at 85% 70%,  rgba(20,100,220,0.10) 0%, transparent 70%),
-    radial-gradient(ellipse 35% 30% at 50% 10%,  rgba(60,140,255,0.07) 0%, transparent 65%),
-    radial-gradient(ellipse 30% 35% at 10% 80%,  rgba(40,120,200,0.08) 0%, transparent 65%),
-    radial-gradient(ellipse 25% 20% at 92% 15%,  rgba(80,180,255,0.06) 0%, transparent 60%);
+    radial-gradient(ellipse 55% 40% at 15% 25%,  rgba(30,120,70,0.18)   0%, transparent 70%),
+    radial-gradient(ellipse 45% 50% at 85% 70%,  rgba(52,211,153,0.10)  0%, transparent 70%),
+    radial-gradient(ellipse 35% 30% at 50% 10%,  rgba(40,160,90,0.10)   0%, transparent 65%),
+    radial-gradient(ellipse 30% 35% at 10% 80%,  rgba(30,100,60,0.12)   0%, transparent 65%),
+    radial-gradient(ellipse 25% 20% at 92% 15%,  rgba(80,200,130,0.08)  0%, transparent 60%);
   pointer-events: none;
   z-index: 0;
 }

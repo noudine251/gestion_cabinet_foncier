@@ -8,16 +8,16 @@
 
   /* ── Palette ────────────────────────────────────────────── */
   var C = {
-    bg1  : '#04091a',
-    bg2  : '#072825',
-    bg3  : '#050e20',
-    line : 'rgba(80,140,255,',
-    node : 'rgba(100,210,255,',
-    flow : 'rgba(130,220,255,', 
-    glow : 'rgba(60,160,255,',
-    star : 'rgba(180,210,255,',
-    grid : 'rgba(50,100,200,',
-    acc  : 'rgba(80,255,180,',   // accent vert menthe (coord labels)
+    bg1  : '#0a1f15',
+    bg2  : '#1B4332',
+    bg3  : '#0d2a1c',
+    line : 'rgba(52,211,153,',   // mint vert #34D399
+    node : 'rgba(100,220,170,',
+    flow : 'rgba(80,215,155,',
+    glow : 'rgba(40,185,110,',
+    star : 'rgba(200,235,215,',  // étoiles blanc-vert
+    grid : 'rgba(40,140,90,',    // grille cadastrale verte
+    acc  : 'rgba(160,255,210,',  // labels GPS
   };
 
   /* ── Patch DOM : retire les emojis + remplace titre SNS ── */
