@@ -42,17 +42,28 @@
     }
   }
 
-  function styleBienvenue() {
+  function applyLoginBranding() {
     var w = document.createTreeWalker(
       document.body, NodeFilter.SHOW_TEXT, null, false
     );
     var n;
     while ((n = w.nextNode())) {
-      if (/^bienvenu/i.test(n.nodeValue.trim())) {
+      if (n.nodeValue.trim() === 'SNS') {
+        n.nodeValue = 'BIENVENUE!';
         var el = n.parentElement;
         if (el) {
-          el.style.setProperty('color', '#34D399', 'important');
-          el.style.setProperty('font-weight', '800', 'important');
+          // Adapte le conteneur au texte plus long tout en gardant le fond vert
+          el.style.setProperty('width', 'auto', 'important');
+          el.style.setProperty('height', 'auto', 'important');
+          el.style.setProperty('min-width', 'unset', 'important');
+          el.style.setProperty('padding', '4px 14px', 'important');
+          el.style.setProperty('border-radius', '6px', 'important');
+          el.style.setProperty('white-space', 'nowrap', 'important');
+          el.style.setProperty('display', 'inline-block', 'important');
+          el.style.setProperty('line-height', '1.5', 'important');
+          el.style.setProperty('font-size', '13px', 'important');
+          el.style.setProperty('font-weight', '700', 'important');
+          el.style.setProperty('letter-spacing', '0.5px', 'important');
         }
         break;
       }
@@ -62,7 +73,7 @@
   var _patchObsActive = false;
   function applyPatches() {
     removeEmojis(document.body);
-    styleBienvenue();
+    applyLoginBranding();
     if (!_patchObsActive) {
       _patchObsActive = true;
       var pObs = new MutationObserver(function(muts) {
@@ -70,7 +81,7 @@
           m.addedNodes.forEach(removeEmojis);
           if (m.type === 'characterData') removeEmojis(m.target);
         });
-        styleBienvenue();
+        applyLoginBranding();
       });
       pObs.observe(document.body, {
         childList: true, subtree: true, characterData: true
