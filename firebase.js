@@ -14,6 +14,7 @@ const firebaseConfig = {
 const APP_KEYS    = ["sns4-req", "sns4-dos", "sns4-users"];
 const DOC_PATH    = "gestion-fonciere/data";
 const WRITE_TOKEN = "SNSFoncier@2024#Secure";
+const PRELOAD_KEY = "__sns_preload"; // clé sessionStorage pour le reload rapide
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
@@ -21,14 +22,10 @@ const db = firebase.firestore();
 // ── Store mémoire ────────────────────────────────────────────
 const memStore = Object.create(null);
 
-// ── Supprimer les surcharges d'instance d'une version précédente ─
-// (localStorage.setItem = ... persistait entre sessions et shadait
-//  notre Storage.prototype override)
+// ── Supprimer toute surcharge d'instance de versions précédentes ─
 try { delete localStorage.getItem;    } catch (_) {}
 try { delete localStorage.setItem;    } catch (_) {}
 try { delete localStorage.removeItem; } catch (_) {}
-
-// ── Nettoyer APP_KEYS du vrai localStorage ────────────────────
 APP_KEYS.forEach(k => {
   try { Storage.prototype.removeItem.call(window.localStorage, k); } catch (_) {}
 });
@@ -51,8 +48,6 @@ Storage.prototype.setItem = function (key, val) {
   if (this === window.localStorage && APP_KEYS.includes(key)) {
     const str = String(val);
     memStore[key] = str;
-    // ⚠️  PAS de lastLocalWrite ici — c'était le bug :
-    //     chaque écriture locale bloquait les sync distants pendant 2s
     db.doc(DOC_PATH)
       .set({ [key]: str, _token: WRITE_TOKEN }, { merge: true })
       .catch(e => console.warn("[Firebase] ⚠️ Write:", e.message));
@@ -69,42 +64,22 @@ Storage.prototype.removeItem = function (key) {
   _proto.del.call(this, key);
 };
 
-// ── Code app.js mis en cache mémoire (fetch une seule fois) ──
-let appCode = null;
-async function getAppCode() {
-  if (appCode) return appCode;
-  const res = await fetch('app.js');
-  appCode = await res.text();
-  return appCode;
-}
-
-// ── Re-rendu React sans rechargement de page ─────────────────
-// Script inline (textContent) → toujours exécuté par le navigateur,
-// jamais dédupliqué contrairement à script[src].
-let rerenderTimer = null;
-function rerenderApp() {
-  clearTimeout(rerenderTimer);
-  rerenderTimer = setTimeout(async () => {
-    const wrapper = document.getElementById('app-wrapper');
-    if (!wrapper) { window.location.reload(); return; }
-    try {
-      const code = await getAppCode();
-      wrapper.innerHTML = '<div id="root"></div>';
-      document.querySelectorAll('script[data-sns-app]').forEach(s => s.remove());
-      const s = document.createElement('script');
-      s.textContent = code;
-      s.setAttribute('data-sns-app', '1');
-      document.body.appendChild(s);
-      console.log("[Firebase] ✅ Interface mise à jour en temps réel");
-    } catch (err) {
-      console.warn("[Firebase] rerenderApp échoué → rechargement :", err.message);
-      window.location.reload();
-    }
-  }, 300);
-}
-
-// ── Chargement initial depuis le serveur ─────────────────────
+// ── Chargement initial ────────────────────────────────────────
+// Si sessionStorage contient des données pré-chargées (reload sync),
+// on les utilise directement → résolution instantanée, zéro requête réseau.
 async function syncFromFirebase() {
+  const preload = sessionStorage.getItem(PRELOAD_KEY);
+  if (preload) {
+    try {
+      const data = JSON.parse(preload);
+      APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
+      sessionStorage.removeItem(PRELOAD_KEY);
+      console.log("[Firebase] ⚡ Données pré-chargées — sync instantané");
+      return; // pas besoin de fetch Firestore
+    } catch (_) {}
+  }
+
+  // Chargement normal : données fraîches depuis le serveur
   try {
     const snap = await db.doc(DOC_PATH).get({ source: 'server' });
     if (snap.exists) {
@@ -115,7 +90,7 @@ async function syncFromFirebase() {
       console.log("[Firebase] 📭 Pas encore de données cloud");
     }
   } catch (err) {
-    console.warn("[Firebase] ⚠️ Serveur inaccessible, cache :", err.message);
+    console.warn("[Firebase] ⚠️ Serveur inaccessible, tentative cache :", err.message);
     try {
       const snap = await db.doc(DOC_PATH).get({ source: 'cache' });
       if (snap.exists) {
@@ -128,24 +103,33 @@ async function syncFromFirebase() {
 }
 
 // ── Listener temps réel ──────────────────────────────────────
-// Seule garde : hasPendingWrites (= c'est MON écriture en attente).
-// lastLocalWrite a été supprimé — c'était lui qui bloquait les
-// mises à jour distantes en considérant à tort le snapshot comme
-// "notre propre écriture récente".
+// Quand un autre navigateur modifie les données :
+//   1. On stocke les nouvelles données dans sessionStorage (survit au reload)
+//   2. window.location.reload() recharge la page
+//   3. syncFromFirebase() trouve sessionStorage → charge instantanément
+//   4. L'écran de chargement est caché immédiatement (voir index.html)
+// → Résultat : mise à jour visible en < 200 ms, sans action utilisateur.
 db.doc(DOC_PATH).onSnapshot(
   snapshot => {
-    if (snapshot.metadata.hasPendingWrites) return; // mon écriture locale → ignorer
+    if (snapshot.metadata.hasPendingWrites) return; // ma propre écriture → ignorer
     if (!window.__appReady) return;                 // app pas encore montée → ignorer
     if (!snapshot.exists) return;
 
     const data = snapshot.data();
-    APP_KEYS.forEach(k => { if (data[k] !== undefined) memStore[k] = data[k]; });
 
-    console.log("[Firebase] 🔄 Changement distant reçu → re-rendu");
-    rerenderApp();
+    // Vérifier qu'il y a réellement un changement dans les données app
+    const hasChange = APP_KEYS.some(k => data[k] !== undefined && data[k] !== memStore[k]);
+    if (!hasChange) return;
+
+    // Pré-charger les données dans sessionStorage avant le reload
+    const preload = {};
+    APP_KEYS.forEach(k => { if (data[k] !== undefined) preload[k] = data[k]; });
+    sessionStorage.setItem(PRELOAD_KEY, JSON.stringify(preload));
+
+    console.log("[Firebase] 🔄 Changement distant → rechargement rapide");
+    window.location.reload();
   },
   err => console.warn("[Firebase] ⚠️ Listener:", err.message)
 );
 
-// ── Promesse exposée pour index.html ─────────────────────────
 window.__firebaseReady = syncFromFirebase();

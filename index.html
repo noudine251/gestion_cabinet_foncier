@@ -50,33 +50,46 @@
     <div id="app-wrapper"><div id="root"></div></div>
 
     <script>
+      // Reload de synchronisation : données déjà dans sessionStorage → masquer
+      // l'écran de chargement immédiatement, pas besoin d'attendre Firebase
+      var isSyncReload = !!sessionStorage.getItem("__sns_preload");
+      if (isSyncReload) {
+        var loader = document.getElementById("loading-screen");
+        if (loader) loader.style.display = "none";
+      }
+
       function loadApp() {
-        const script = document.createElement("script");
+        var script = document.createElement("script");
         script.src = "app.js";
         script.setAttribute("data-sns-app", "1");
         script.onload = function () {
-          // Signaler que l'app est montée (active le listener temps réel)
           window.__appReady = true;
-          // Masquer l'écran de chargement
-          const loader = document.getElementById("loading-screen");
+          // Masquer l'écran de chargement (chargement normal uniquement)
+          var loader = document.getElementById("loading-screen");
           if (loader) {
             loader.style.opacity = "0";
             loader.style.transition = "opacity 0.4s ease";
-            setTimeout(() => loader.remove(), 400);
+            setTimeout(function () { loader.remove(); }, 400);
           }
           // Lancer l'animation de la page de connexion
-          const anim = document.createElement("script");
+          var anim = document.createElement("script");
           anim.src = "login-anim.js";
           document.body.appendChild(anim);
         };
         document.body.appendChild(script);
       }
 
-      // Attendre la sync Firebase (max 2 secondes), puis lancer l'app
-      const timeout = new Promise(resolve => setTimeout(resolve, 2000));
-      Promise.race([window.__firebaseReady, timeout])
-        .then(loadApp)
-        .catch(loadApp);
+      if (isSyncReload) {
+        // Sync reload : __firebaseReady résout instantanément (sessionStorage)
+        // → charger l'app dès que possible, sans timeout de 2s
+        window.__firebaseReady.then(loadApp).catch(loadApp);
+      } else {
+        // Chargement normal : attendre Firebase (max 2 secondes)
+        var timeout = new Promise(function (resolve) { setTimeout(resolve, 2000); });
+        Promise.race([window.__firebaseReady, timeout])
+          .then(loadApp)
+          .catch(loadApp);
+      }
     </script>
   </body>
 </html>
