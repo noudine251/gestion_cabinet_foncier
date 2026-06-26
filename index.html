@@ -19,7 +19,7 @@
     <script src="firebase.js"></script>
   </head>
   <body>
-    <!-- Écran de chargement pendant la sync Firebase -->
+    <!-- Écran de chargement -->
     <div id="loading-screen" style="
       position: fixed; inset: 0;
       background: #F5F0E8;
@@ -50,8 +50,7 @@
     <div id="app-wrapper"><div id="root"></div></div>
 
     <script>
-      // Reload de synchronisation : données déjà dans sessionStorage → masquer
-      // l'écran de chargement immédiatement, pas besoin d'attendre Firebase
+      // Reload de synchronisation : masquer l'écran immédiatement
       var isSyncReload = !!sessionStorage.getItem("__sns_preload");
       if (isSyncReload) {
         var loader = document.getElementById("loading-screen");
@@ -64,31 +63,47 @@
         script.setAttribute("data-sns-app", "1");
         script.onload = function () {
           window.__appReady = true;
-          // Masquer l'écran de chargement (chargement normal uniquement)
+
+          // Masquer le loading screen (chargement normal)
           var loader = document.getElementById("loading-screen");
           if (loader) {
             loader.style.opacity = "0";
             loader.style.transition = "opacity 0.4s ease";
             setTimeout(function () { loader.remove(); }, 400);
           }
-          // Lancer l'animation de la page de connexion
+
+          // Lancer l'animation de connexion
           var anim = document.createElement("script");
           anim.src = "login-anim.js";
           document.body.appendChild(anim);
+
+          // ── Restaurer la session après un fallback reload ──
+          // Si l'injection React a échoué et qu'on a rechargé la page,
+          // on remet l'utilisateur connecté sans qu'il ait à se reconnecter.
+          var savedSession = sessionStorage.getItem("__sns_session");
+          if (savedSession) {
+            sessionStorage.removeItem("__sns_session");
+            (function tryRestore(attempt) {
+              var s = window.__snsFindSetters && window.__snsFindSetters();
+              if (s && s.setUser && s.getUser) {
+                // Ne restaurer que si aucun utilisateur n'est déjà connecté
+                if (!s.getUser()) {
+                  try { s.setUser(JSON.parse(savedSession)); } catch (_) {}
+                }
+              } else if (attempt < 20) {
+                setTimeout(function () { tryRestore(attempt + 1); }, 100);
+              }
+            })(0);
+          }
         };
         document.body.appendChild(script);
       }
 
       if (isSyncReload) {
-        // Sync reload : __firebaseReady résout instantanément (sessionStorage)
-        // → charger l'app dès que possible, sans timeout de 2s
         window.__firebaseReady.then(loadApp).catch(loadApp);
       } else {
-        // Chargement normal : attendre Firebase (max 2 secondes)
         var timeout = new Promise(function (resolve) { setTimeout(resolve, 2000); });
-        Promise.race([window.__firebaseReady, timeout])
-          .then(loadApp)
-          .catch(loadApp);
+        Promise.race([window.__firebaseReady, timeout]).then(loadApp).catch(loadApp);
       }
     </script>
   </body>
