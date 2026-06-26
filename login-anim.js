@@ -42,33 +42,6 @@
     }
   }
 
-  function applyLoginBranding() {
-    var w = document.createTreeWalker(
-      document.body, NodeFilter.SHOW_TEXT, null, false
-    );
-    var n;
-    while ((n = w.nextNode())) {
-      if (n.nodeValue.trim() === 'SNS') {
-        n.nodeValue = 'BIENVENUE!';
-        var el = n.parentElement;
-        if (el) {
-          el.style.setProperty('width', 'auto', 'important');
-          el.style.setProperty('height', 'auto', 'important');
-          el.style.setProperty('min-width', 'unset', 'important');
-          el.style.setProperty('padding', '5px 18px', 'important');
-          el.style.setProperty('border-radius', '8px', 'important');
-          el.style.setProperty('white-space', 'nowrap', 'important');
-          el.style.setProperty('display', 'inline-block', 'important');
-          el.style.setProperty('line-height', '1.5', 'important');
-          el.style.setProperty('font-size', '17px', 'important');
-          el.style.setProperty('font-weight', '800', 'important');
-          el.style.setProperty('letter-spacing', '1px', 'important');
-        }
-        break;
-      }
-    }
-  }
-
   /* Masque le message Bonjour/Bienvenue dans le tableau de bord */
   function patchDashboardGreeting(root) {
     var target = root || document.body;
@@ -90,7 +63,6 @@
   var _patchObsActive = false;
   function applyPatches() {
     removeEmojis(document.body);
-    applyLoginBranding();
     patchDashboardGreeting();
     if (!_patchObsActive) {
       _patchObsActive = true;
@@ -100,7 +72,6 @@
           m.addedNodes.forEach(function(nd) { patchDashboardGreeting(nd); });
           if (m.type === 'characterData') removeEmojis(m.target);
         });
-        applyLoginBranding();
       });
       pObs.observe(document.body, {
         childList: true, subtree: true, characterData: true
