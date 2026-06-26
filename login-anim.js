@@ -9,11 +9,11 @@
   /* ── Palette ────────────────────────────────────────────── */
   var C = {
     bg1  : '#04091a',
-    bg2  : '#071328',
+    bg2  : '#072825',
     bg3  : '#050e20',
     line : 'rgba(80,140,255,',
     node : 'rgba(100,210,255,',
-    flow : 'rgba(130,220,255,',
+    flow : 'rgba(130,220,255,', 
     glow : 'rgba(60,160,255,',
     star : 'rgba(180,210,255,',
     grid : 'rgba(50,100,200,',
@@ -52,21 +52,38 @@
         n.nodeValue = 'BIENVENUE!';
         var el = n.parentElement;
         if (el) {
-          // Adapte le conteneur au texte plus long tout en gardant le fond vert
           el.style.setProperty('width', 'auto', 'important');
           el.style.setProperty('height', 'auto', 'important');
           el.style.setProperty('min-width', 'unset', 'important');
-          el.style.setProperty('padding', '4px 14px', 'important');
-          el.style.setProperty('border-radius', '6px', 'important');
+          el.style.setProperty('padding', '5px 18px', 'important');
+          el.style.setProperty('border-radius', '8px', 'important');
           el.style.setProperty('white-space', 'nowrap', 'important');
           el.style.setProperty('display', 'inline-block', 'important');
           el.style.setProperty('line-height', '1.5', 'important');
-          el.style.setProperty('font-size', '13px', 'important');
-          el.style.setProperty('font-weight', '700', 'important');
-          el.style.setProperty('letter-spacing', '0.5px', 'important');
+          el.style.setProperty('font-size', '17px', 'important');
+          el.style.setProperty('font-weight', '800', 'important');
+          el.style.setProperty('letter-spacing', '1px', 'important');
         }
         break;
       }
+    }
+  }
+
+  /* Masque le message Bonjour/Bienvenue dans le tableau de bord */
+  function patchDashboardGreeting(root) {
+    var target = root || document.body;
+    var w = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, null, false);
+    var n;
+    while ((n = w.nextNode())) {
+      var t = n.nodeValue.trim();
+      if (!t) continue;
+      var isGreeting = /^bonjour\b/i.test(t) ||
+                       (/^bienvenu\b/i.test(t) && t.length < 40);
+      if (!isGreeting) continue;
+      var el = n.parentElement;
+      if (!el) continue;
+      try { if (el.closest('div[style*="min-height: 100vh"]')) continue; } catch (_) {}
+      el.style.setProperty('display', 'none', 'important');
     }
   }
 
@@ -74,11 +91,13 @@
   function applyPatches() {
     removeEmojis(document.body);
     applyLoginBranding();
+    patchDashboardGreeting();
     if (!_patchObsActive) {
       _patchObsActive = true;
       var pObs = new MutationObserver(function(muts) {
         muts.forEach(function(m) {
           m.addedNodes.forEach(removeEmojis);
+          m.addedNodes.forEach(function(nd) { patchDashboardGreeting(nd); });
           if (m.type === 'characterData') removeEmojis(m.target);
         });
         applyLoginBranding();
