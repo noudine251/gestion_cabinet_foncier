@@ -207,56 +207,73 @@ function syncFromFirebase() {
 }
 
 // ── Listener temps réel ──────────────────────────────────────
-db.doc(DOC_PATH).onSnapshot(
-  function(snapshot) {
-    if (snapshot.metadata.hasPendingWrites) return;
-    if (!window.__appReady) return;
-    if (!snapshot.exists) return;
+var _snapshotUnsub = null;
 
-    var data = snapshot.data();
-    var hasChange = APP_KEYS.some(function(k) {
-      return data[k] !== undefined && data[k] !== memStore[k];
-    });
-    if (!hasChange) return;
+function _onSnapshotData(snapshot) {
+  if (snapshot.metadata.hasPendingWrites) return;
+  if (!window.__appReady) return;
+  if (!snapshot.exists) return;
 
-    // Mettre à jour le store mémoire
-    APP_KEYS.forEach(function(k) { if (data[k] !== undefined) memStore[k] = data[k]; });
+  var data = snapshot.data();
+  var hasChange = APP_KEYS.some(function(k) {
+    return data[k] !== undefined && data[k] !== memStore[k];
+  });
+  if (!hasChange) return;
 
-    // ── Stratégie 1 : injection directe (setters capturés par DevTools hook) ──
-    var s = window.__snsSetters;
-    if (s) {
-      try {
-        var ok = false;
-        var v;
-        if (data["sns4-req"] !== undefined) {
-          v = data["sns4-req"] ? JSON.parse(data["sns4-req"]) : [];
-          if (Array.isArray(v)) { s.setReqs(v); ok = true; }
-        }
-        if (data["sns4-dos"] !== undefined) {
-          v = data["sns4-dos"] ? JSON.parse(data["sns4-dos"]) : [];
-          if (Array.isArray(v)) { s.setDossiers(v); ok = true; }
-        }
-        if (data["sns4-users"] !== undefined) {
-          v = data["sns4-users"] ? JSON.parse(data["sns4-users"]) : [];
-          if (Array.isArray(v)) { s.setUsers(v); ok = true; }
-        }
-        if (ok) return; // succès — pas de rechargement
-      } catch (_) {}
-    }
+  APP_KEYS.forEach(function(k) { if (data[k] !== undefined) memStore[k] = data[k]; });
 
-    // ── Stratégie 2 : reload rapide (fallback) ──────────────
-    // Préserver la session pour ne pas retourner à la page de connexion
+  var s = window.__snsSetters;
+  if (s) {
     try {
-      var user = s && s.getUser ? s.getUser() : null;
-      if (user) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      var ok = false;
+      var v;
+      if (data["sns4-req"] !== undefined) {
+        v = data["sns4-req"] ? JSON.parse(data["sns4-req"]) : [];
+        if (Array.isArray(v)) { s.setReqs(v); ok = true; }
+      }
+      if (data["sns4-dos"] !== undefined) {
+        v = data["sns4-dos"] ? JSON.parse(data["sns4-dos"]) : [];
+        if (Array.isArray(v)) { s.setDossiers(v); ok = true; }
+      }
+      if (data["sns4-users"] !== undefined) {
+        v = data["sns4-users"] ? JSON.parse(data["sns4-users"]) : [];
+        if (Array.isArray(v)) { s.setUsers(v); ok = true; }
+      }
+      if (ok) return;
     } catch (_) {}
+  }
 
-    var preload = {};
-    APP_KEYS.forEach(function(k) { if (data[k] !== undefined) preload[k] = data[k]; });
-    sessionStorage.setItem(PRELOAD_KEY, JSON.stringify(preload));
-    window.location.reload();
-  },
-  function(err) { console.warn("[SNS] Listener:", err.message); }
-);
+  try {
+    var user = s && s.getUser ? s.getUser() : null;
+    if (user) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  } catch (_) {}
 
-window.__firebaseReady = syncFromFirebase();
+  var preload = {};
+  APP_KEYS.forEach(function(k) { if (data[k] !== undefined) preload[k] = data[k]; });
+  sessionStorage.setItem(PRELOAD_KEY, JSON.stringify(preload));
+  window.location.reload();
+}
+
+function _startListener() {
+  if (_snapshotUnsub) return;
+  _snapshotUnsub = db.doc(DOC_PATH).onSnapshot(
+    _onSnapshotData,
+    function(err) { console.warn("[SNS] Listener:", err.message); _snapshotUnsub = null; }
+  );
+}
+
+// ── Démarrage conditionnel selon l'état d'authentification ──
+var _firebaseReadyResolve;
+window.__firebaseReady = new Promise(function(resolve) { _firebaseReadyResolve = resolve; });
+
+auth.onAuthStateChanged(function(user) {
+  if (user) {
+    // Utilisateur connecté : synchroniser les données et démarrer le listener
+    syncFromFirebase().then(_firebaseReadyResolve).catch(_firebaseReadyResolve);
+    _startListener();
+  } else {
+    // Pas encore connecté : résoudre immédiatement pour afficher la page de connexion
+    _firebaseReadyResolve();
+    if (_snapshotUnsub) { _snapshotUnsub(); _snapshotUnsub = null; }
+  }
+});
