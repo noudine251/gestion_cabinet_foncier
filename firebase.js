@@ -177,6 +177,7 @@ function extractSettersFromRoot(fiberRoot) {
 })();
 
 // ── Chargement initial depuis Firestore ───────────────────────
+window.__snsSync = syncFromFirebase;
 function syncFromFirebase() {
   var preload = sessionStorage.getItem(PRELOAD_KEY);
   if (preload) {
