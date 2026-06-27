@@ -177,35 +177,38 @@ function extractSettersFromRoot(fiberRoot) {
 })();
 
 // ── Chargement initial depuis Firestore ───────────────────────
-window.__snsSync = syncFromFirebase;
+function _applyData(d) {
+  APP_KEYS.forEach(function(k) { if (d[k] !== undefined) memStore[k] = d[k]; });
+}
+
 function syncFromFirebase() {
   var preload = sessionStorage.getItem(PRELOAD_KEY);
   if (preload) {
     try {
       var data = JSON.parse(preload);
-      APP_KEYS.forEach(function(k) { if (data[k] !== undefined) memStore[k] = data[k]; });
+      _applyData(data);
       sessionStorage.removeItem(PRELOAD_KEY);
       return Promise.resolve();
     } catch (_) {}
   }
-  return db.doc(DOC_PATH).get({ source: 'server' })
+  // Cache d'abord (rapide sur mobile), puis rafraîchissement serveur en arrière-plan
+  return db.doc(DOC_PATH).get({ source: 'cache' })
     .then(function(snap) {
-      if (snap.exists) {
-        var d = snap.data();
-        APP_KEYS.forEach(function(k) { if (d[k] !== undefined) memStore[k] = d[k]; });
-      }
+      if (snap.exists) _applyData(snap.data());
+      // Rafraîchir depuis le serveur sans bloquer
+      db.doc(DOC_PATH).get({ source: 'server' })
+        .then(function(s) { if (s.exists) _applyData(s.data()); })
+        .catch(function() {});
     })
     .catch(function() {
-      return db.doc(DOC_PATH).get({ source: 'cache' })
-        .then(function(snap) {
-          if (snap.exists) {
-            var d = snap.data();
-            APP_KEYS.forEach(function(k) { if (d[k] !== undefined) memStore[k] = d[k]; });
-          }
-        })
+      // Pas de cache : attendre le serveur
+      return db.doc(DOC_PATH).get({ source: 'server' })
+        .then(function(snap) { if (snap.exists) _applyData(snap.data()); })
         .catch(function() {});
     });
 }
+
+// ── Démarrage conditionnel selon l'état d'authentification ──
 
 // ── Listener temps réel ──────────────────────────────────────
 var _snapshotUnsub = null;
@@ -265,15 +268,22 @@ function _startListener() {
 
 // ── Démarrage conditionnel selon l'état d'authentification ──
 var _firebaseReadyResolve;
+var _activeSyncPromise = null;
 window.__firebaseReady = new Promise(function(resolve) { _firebaseReadyResolve = resolve; });
+
+// tryLogin réutilise la promise en cours au lieu d'en lancer une nouvelle
+window.__snsSync = function() {
+  return _activeSyncPromise || syncFromFirebase();
+};
 
 auth.onAuthStateChanged(function(user) {
   if (user) {
-    // Utilisateur connecté : synchroniser les données et démarrer le listener
-    syncFromFirebase().then(_firebaseReadyResolve).catch(_firebaseReadyResolve);
+    _activeSyncPromise = syncFromFirebase();
+    _activeSyncPromise.then(_firebaseReadyResolve).catch(_firebaseReadyResolve);
+    _activeSyncPromise.then(function() { _activeSyncPromise = null; }).catch(function() { _activeSyncPromise = null; });
     _startListener();
   } else {
-    // Pas encore connecté : résoudre immédiatement pour afficher la page de connexion
+    _activeSyncPromise = null;
     _firebaseReadyResolve();
     if (_snapshotUnsub) { _snapshotUnsub(); _snapshotUnsub = null; }
   }
